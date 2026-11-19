@@ -38,8 +38,7 @@ lift     = 20 * IN
 platform_t = 1.5 * IN
 POPPED   = True             # False = show stowed
 
-#doc = App.newDocument("FrontierBedCamper")
-doc = App.ActiveDocument
+doc = App.ActiveDocument or App.newDocument("FrontierBedCamper")
 
 def feature(name, shape, ghost=None, color=None):
     f = doc.addObject("Part::Feature", name)
