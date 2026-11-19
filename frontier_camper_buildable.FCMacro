@@ -1,0 +1,298 @@
+# 2005 Nissan Frontier 6 ft bed - BUILDABLE pop-up camper generator (FreeCAD, Part workbench)
+#
+# Construction (all standard stock):
+#   Frame  : T-slot aluminum extrusion (1"x1" 1010 or 20x20 mm 2020), joined with inside corner
+#            brackets + T-nuts + button-head screws. No welding, cut-to-length only.
+#   Panels : 1/4" plywood skin + 1" XPS foam + 1/4" plywood skin (about 1.47" thick), cut from 4x8 ft sheets.
+#   Deck   : 3/4" plywood, 2 halves (each fits a 4x8 sheet; halves fold up for storage access).
+#   Roof   : sandwich panel in 2 pieces (65" wide would not fit a 4 ft sheet), lifted by 4 linear actuators.
+#   Skirt  : marine canvas / Sunbrella-type fabric between fixed walls and lid.
+#
+# Run AFTER closing other camper documents. Outputs: 3D model, cut list + BOM + weight in the
+# Report view (View > Panels > Report view), and a CSV in your Downloads folder.
+# Units: mm. x = 0 at tailgate, + toward cab. y = across bed. z = 0 at bed floor top.
+# ALL VALUES ARE ESTIMATES - verify against supplier datasheets before cutting anything.
+import os, math, csv
+from collections import Counter
+import FreeCAD as App
+import FreeCADGui
+import Part
+
+IN = 25.4
+V = App.Vector
+
+# ====================== TRUCK (your measurements) ======================
+bed_len, bed_w_top, wheel_well_w = 72.5*IN, 58.6*IN, 44.4*IN
+well_h, well_len, well_x, well_r = 7*IN, 22*IN, 24*IN, 4*IN
+rail_h, rail_cap, floor_t = 18*IN, 3.5*IN, 1*IN
+tailgate_t, headboard_t, cab_gap = 3.5*IN, 1*IN, 0.5*IN
+cab_depth, cab_width = 30*IN, 66.5*IN
+cab_roof_above_rail = 22*IN        # re-measure! scan suggests ~19.4 in
+DRAW_TRUCK = True
+
+# ====================== STANDARD STOCK ======================
+SHEET = (1219.2, 2438.4)           # 4 ft x 8 ft
+SKIN_T, CORE_T = 6.0, 25.4         # 1/4" plywood skins, 1" XPS foam board
+PANEL_T = 2*SKIN_T + CORE_T
+DECK_T = 19.0                      # 3/4" plywood
+PROFILES = {                       # kg_m is approximate - check datasheet
+    "1010": dict(size=25.4, kg_m=0.74, name='1x1in T-slot (1010)'),
+    "2020": dict(size=20.0, kg_m=0.50, name='20x20mm T-slot (2020)'),
+}
+PROFILE = "1010"
+STROKES_IN = [4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 30, 36, 40]  # typical actuator strokes
+ACT_RETRACT_EXTRA = 5.5*IN         # retracted length = stroke + this (check datasheet)
+DENS = dict(ply=680.0, xps=32.0, fabric_kg_m2=0.4)   # kg/m3, kg/m2 (approximate)
+ACT_KG, WINDOW_KG, HARDWARE_KG = 2.5, 1.0, 8.0       # approximate allowances
+
+# ====================== DESIGN ======================
+shell_cab_gap = 1*IN
+stow_h = 18*IN                     # stowed height above rails; keep below cab roof
+lift_req = 20*IN                   # requested pop-up height (snapped to an actuator stroke)
+POPPED = True                      # False = show stowed
+POST_SPACING = 600.0               # max distance between vertical frame posts
+WINDOW_BAYS = (1, 2)               # which post bays get a window (each side)
+win_w, win_h = 16*IN, 8*IN
+hatch_w = 36*IN
+CAMPER_WEIGHT_BUDGET_LB = 350
+
+# ====================== DERIVED ======================
+PROF = PROFILES[PROFILE]
+P = PROF["size"]
+L = bed_len - shell_cab_gap
+ylo, yhi = -rail_cap, bed_w_top + rail_cap
+W = yhi - ylo
+roof_t = PANEL_T
+wall_h = stow_h - P - roof_t       # fixed wall height above rails (panel + frame)
+z_top = rail_h + wall_h            # top of fixed walls = underside of lid ring
+stroke = min([s for s in STROKES_IN if s*IN >= lift_req] or [STROKES_IN[-1]]) * IN
+lift = stroke
+retracted = stroke + ACT_RETRACT_EXTRA
+riser_top = z_top - retracted      # pedestal height so retracted actuator reaches the lid
+fx0, fx1, fy0, fy1 = PANEL_T, L - PANEL_T, ylo + PANEL_T, yhi - PANEL_T
+FL, FW = fx1 - fx0, fy1 - fy0
+door_h = wall_h - 2*P
+dz = lift if POPPED else 0
+
+doc = App.ActiveDocument or App.newDocument("FrontierCamper")
+warnings = []
+
+def mk(l, w, h, x, y, z):
+    return Part.makeBox(l, w, h, V(x, y, z))
+
+def feature(name, shape, group=None, ghost=None, color=None):
+    f = doc.addObject("Part::Feature", name)
+    f.Shape = shape
+    if group is not None:
+        group.addObject(f)
+    if ghost is not None:
+        f.ViewObject.Transparency = ghost
+    if color is not None:
+        f.ViewObject.ShapeColor = color
+    return f
+
+def group(name):
+    return doc.addObject("App::DocumentObjectGroup", name)
+
+# ====================== TRUCK (reference) ======================
+if DRAW_TRUCK:
+    g = group("Truck")
+    grey, dark = (0.5, 0.5, 0.55), (0.3, 0.3, 0.35)
+    feature("BedFloor", mk(bed_len, bed_w_top, floor_t, 0, 0, -floor_t), g, color=(0.35, 0.35, 0.4))
+    feature("RailLeft", mk(bed_len, rail_cap, rail_h + floor_t, 0, -rail_cap, -floor_t), g, color=grey)
+    feature("RailRight", mk(bed_len, rail_cap, rail_h + floor_t, 0, bed_w_top, -floor_t), g, color=grey)
+    feature("Headboard", mk(headboard_t, bed_w_top + 2*rail_cap, rail_h + floor_t, bed_len, -rail_cap, -floor_t), g, color=grey)
+    feature("Tailgate", mk(tailgate_t, bed_w_top, rail_h - IN, -tailgate_t, 0, 0), g, 40, grey)
+    side = (bed_w_top - wheel_well_w) / 2
+    for nm, y in (("WellLeft", 0), ("WellRight", bed_w_top - side)):
+        base = mk(well_len, side, well_h - well_r, well_x, y, 0)
+        top = mk(well_len - 2*well_r, side, well_r, well_x + well_r, y, well_h - well_r)
+        c1 = Part.makeCylinder(well_r, side, V(well_x + well_r, y, well_h - well_r), V(0, 1, 0))
+        c2 = Part.makeCylinder(well_r, side, V(well_x + well_len - well_r, y, well_h - well_r), V(0, 1, 0))
+        feature(nm, base.fuse([top, c1, c2]), g, color=dark)
+    feature("CabGhost", mk(cab_depth, cab_width, rail_h + cab_roof_above_rail,
+                           bed_len + headboard_t + cab_gap, (bed_w_top - cab_width)/2, 0),
+            g, 75, (0.7, 0.2, 0.2))
+
+# ====================== FRAME (T-slot) ======================
+members = []        # (label, length mm)
+joints = [0]
+def tslot(label, axis, x, y, z, length):
+    d = {"x": (length, P, P), "y": (P, length, P), "z": (P, P, length)}[axis]
+    members.append((label, length))
+    return mk(d[0], d[1], d[2], x, y, z)
+
+def ring(z, tag, frame):
+    frame += [tslot(tag + " long", "x", fx0, fy0, z, FL),
+              tslot(tag + " long", "x", fx0, fy1 - P, z, FL),
+              tslot(tag + " short", "y", fx0, fy0 + P, z, FW - 2*P),
+              tslot(tag + " short", "y", fx1 - P, fy0 + P, z, FW - 2*P)]
+    joints[0] += 4
+
+frame = []
+ring(rail_h, "Base ring", frame)
+ring(z_top - P, "Top ring", frame)
+post_h = wall_h - 2*P
+for x in (fx0, fx1 - P):
+    for y in (fy0, fy1 - P):
+        frame.append(tslot("Corner post", "z", x, y, rail_h + P, post_h)); joints[0] += 2
+n_bays = max(1, math.ceil(FL / POST_SPACING))
+bay = FL / n_bays
+for i in range(1, n_bays):
+    for y in (fy0, fy1 - P):
+        frame.append(tslot("Mid post", "z", fx0 + i*bay - P/2, y, rail_h + P, post_h)); joints[0] += 2
+feature("FixedFrame", Part.makeCompound(frame), group("Frame_Fixed"), color=(0.75, 0.75, 0.78))
+
+# Lid frame (moves with the roof)
+lid = []
+lid += [tslot("Lid long", "x", fx0, fy0, z_top, FL),
+        tslot("Lid long", "x", fx0, fy1 - P, z_top, FL),
+        tslot("Lid short", "y", fx0, fy0 + P, z_top, FW - 2*P),
+        tslot("Lid short", "y", fx1 - P, fy0 + P, z_top, FW - 2*P),
+        tslot("Lid center rib", "x", fx0 + P, (fy0 + fy1)/2 - P/2, z_top, FL - 2*P)]
+joints[0] += 6
+lid_shape = Part.makeCompound(lid)
+lid_shape.translate(V(0, 0, dz))
+feature("LidFrame", lid_shape, group("Frame_Lid"), color=(0.75, 0.75, 0.78))
+
+# ====================== PANELS ======================
+panels = []         # (label, a mm, b mm)
+gp = group("Panels")
+zmid_win = rail_h + (wall_h - win_h) / 2
+if win_w > bay - P - 10:
+    warnings.append("Window (%.1f in) is wider than the clear bay (%.1f in); reduce win_w or POST_SPACING."
+                    % (win_w/IN, (bay - P - 10)/IN))
+win_cuts_x = [fx0 + (i + 0.5)*bay - win_w/2 for i in WINDOW_BAYS if i < n_bays]
+for nm, y in (("PanelLeft", ylo), ("PanelRight", yhi - PANEL_T)):
+    s = mk(L, PANEL_T, wall_h, 0, y, rail_h)
+    for wx in win_cuts_x:
+        s = s.cut(mk(win_w, PANEL_T*3, win_h, wx, y - PANEL_T, zmid_win))
+    feature(nm, s, gp, color=(0.85, 0.85, 0.8))
+    panels.append(("Side wall", L, wall_h))
+rear = mk(PANEL_T, W - 2*PANEL_T, wall_h, 0, ylo + PANEL_T, rail_h)
+rear = rear.cut(mk(PANEL_T*3, hatch_w, door_h, -PANEL_T, (bed_w_top - hatch_w)/2, rail_h + P))
+feature("PanelRear_Hatch", rear, gp, color=(0.85, 0.85, 0.8))
+panels.append(("Rear wall (hatch cut-out = door)", W - 2*PANEL_T, wall_h))
+feature("PanelFront", mk(PANEL_T, W - 2*PANEL_T, wall_h, L - PANEL_T, ylo + PANEL_T, rail_h), gp, color=(0.85, 0.85, 0.8))
+panels.append(("Front wall", W - 2*PANEL_T, wall_h))
+
+# Roof in two pieces split at the centerline (aligns with the lid center rib)
+ymid = (ylo + yhi) / 2
+for nm, y0 in (("RoofA", ylo), ("RoofB", ymid)):
+    feature(nm, mk(L, W/2, roof_t, 0, y0, z_top + P + dz), gp, color=(0.9, 0.9, 0.85))
+    panels.append(("Roof half", L, W/2))
+
+# Fabric skirt (ghost)
+sk = mk(L, W, lift + P, 0, ylo, z_top).cut(mk(L - 8, W - 8, lift + P, 4, ylo + 4, z_top))
+if POPPED:
+    feature("FabricSkirt", sk, gp, 60, (0.6, 0.7, 0.6))
+
+# ====================== DECK + LIFT ACTUATORS ======================
+act_xy = [(x, y) for x in (fx0 + P + 40, fx1 - P - 40) for y in (fy0 + P + 40, fy1 - P - 40)]
+deck_halves = []
+for nm, y0 in (("DeckA", 0), ("DeckB", bed_w_top/2)):
+    d = mk(L - 2*PANEL_T, bed_w_top/2, DECK_T, PANEL_T, y0, well_h)
+    for (ax, ay) in act_xy:
+        d = d.cut(mk(60, 60, DECK_T*3, ax - 30, ay - 30, well_h - DECK_T))
+    feature(nm, d, gp, 50, (0.8, 0.6, 0.3))
+    deck_halves.append(("Sleeping deck half", L - 2*PANEL_T, bed_w_top/2))
+ga = group("Actuators")
+for i, (ax, ay) in enumerate(act_xy):
+    if riser_top > 0:
+        feature("Pedestal%d" % i, mk(38, 38, riser_top, ax - 19, ay - 19, 0), ga, color=(0.7, 0.55, 0.3))
+    feature("Actuator%d" % i, Part.makeCylinder(20, retracted + dz, V(ax, ay, max(riser_top, 0))), ga, color=(0.2, 0.2, 0.2))
+
+# ====================== CHECKS ======================
+def fits(a, b):
+    s1, s2 = SHEET
+    return (a <= s1 and b <= s2) or (b <= s1 and a <= s2)
+for lab, a, b in panels + deck_halves:
+    if not fits(a, b):
+        warnings.append("%s (%.0f x %.0f in) does not fit a 4x8 sheet - split it." % (lab, a/IN, b/IN))
+if stow_h >= cab_roof_above_rail:
+    warnings.append("Stowed camper is taller than the cab roof!")
+if riser_top < 0:
+    warnings.append("Actuator retracted length (%.1f in) is taller than the stowed gap - use a shorter stroke." % (retracted/IN))
+if stroke < lift_req:
+    warnings.append("Requested lift exceeds the largest listed stroke.")
+
+# ====================== BOM / CUT LIST ======================
+bom = []
+def add(cat, item, qty, spec=""):
+    bom.append((cat, item, qty, spec))
+for (lab, l), q in sorted(Counter((m[0], round(m[1], 1)) for m in members).items()):
+    add("T-slot", PROF["name"] + " - " + lab, q, "%.2f in (%.0f mm)" % (l/IN, l))
+for (lab, a, b), q in sorted(Counter((p[0], round(p[1], 1), round(p[2], 1)) for p in panels).items()):
+    add("Panel", lab + " - 1/4in ply skin", 2*q, "%.2f x %.2f in" % (a/IN, b/IN))
+    add("Panel", lab + " - 1in XPS core", q, "%.2f x %.2f in" % (a/IN, b/IN))
+for (lab, a, b), q in sorted(Counter((p[0], round(p[1], 1), round(p[2], 1)) for p in deck_halves).items()):
+    add("Deck", lab + " - 3/4in plywood", q, "%.2f x %.2f in" % (a/IN, b/IN))
+
+skin_area = sum(2*a*b for _, a, b in panels)
+core_area = sum(a*b for _, a, b in panels)
+sheet_area = SHEET[0]*SHEET[1]
+add("Sheet goods", "1/4in plywood 4x8 sheets (est., 75% yield)", math.ceil(skin_area/(0.75*sheet_area)))
+add("Sheet goods", "1in XPS 4x8 boards (est., 75% yield)", math.ceil(core_area/(0.75*sheet_area)))
+add("Sheet goods", "3/4in plywood 4x8 sheets for deck", math.ceil(sum(a*b for _, a, b in deck_halves)/(0.85*sheet_area)))
+
+tot_len = sum(m[1] for m in members)
+perim_lid = 2*(FL + FW)
+perim_door = 2*(hatch_w + door_h)
+skirt_area_m2 = 2*(L + W) * (lift + P + 50) / 1e6
+add("Fittings", "Inside corner bracket (match profile) + 4 screws + 4 T-nuts each", joints[0], "1 per frame joint; double up on lid corners")
+add("Fittings", "Button-head screw + T-nut, panel attachment (about 8 in pitch)", math.ceil(tot_len/203.2), "")
+add("Fittings", "Linear actuator, 12 V, stroke %.0f in, retracted ~%.1f in" % (stroke/IN, retracted/IN), 4, "check force rating and datasheet length")
+add("Fittings", "Actuator controller, synchronized outputs, with limit switches", 1, "")
+add("Fittings", "Compression gasket / weatherstrip", "%.1f ft" % ((perim_lid + perim_door)/304.8), "lid + hatch")
+add("Fittings", "Piano hinge for hatch door", "%.1f in" % (hatch_w/IN), "")
+add("Fittings", "Draw latch (4 lid corners + 2 hatch)", 6, "")
+add("Fittings", "Truck bed-rail clamps / tie-downs", 4, "avoids drilling the bed")
+add("Fittings", "RV/trailer window, rough opening %.0f x %.0f in" % (win_w/IN, win_h/IN), 2*len(win_cuts_x), "")
+add("Fittings", "2x2 lumber pedestal for actuator, %.1f in tall" % (max(riser_top, 0)/IN), 4, "")
+add("Fabric", "Marine canvas / Sunbrella-type skirt, with zippered windows", "%.1f m2" % skirt_area_m2, "add 10% for seams")
+add("Sealant", "Butyl tape + urethane sealant for panel edges", 1, "")
+
+# ---- weight estimate (approximate) ----
+kg = {
+    "T-slot frame": tot_len/1000 * PROF["kg_m"],
+    "Plywood skins": skin_area * SKIN_T / 1e9 * DENS["ply"],
+    "XPS cores": core_area * CORE_T / 1e9 * DENS["xps"],
+    "Deck plywood": sum(a*b for _, a, b in deck_halves) * DECK_T / 1e9 * DENS["ply"],
+    "Fabric": skirt_area_m2 * DENS["fabric_kg_m2"],
+    "Actuators (4)": 4 * ACT_KG,
+    "Windows": 2*len(win_cuts_x) * WINDOW_KG,
+    "Hardware allowance": HARDWARE_KG,
+}
+total_kg = sum(kg.values())
+
+lines = ["", "================ CAMPER BUILD REPORT ================",
+         "Profile: %s | panel thickness: %.2f in | wall height: %.1f in" % (PROF["name"], PANEL_T/IN, wall_h/IN),
+         "Stowed height above rails: %.1f in (cab roof: %.1f in)  |  Lift: %.0f in actuator stroke" % (stow_h/IN, cab_roof_above_rail/IN, stroke/IN),
+         "Headroom above deck, stowed: %.1f in | popped: %.1f in" % (
+             (z_top + P - well_h - DECK_T)/IN, (z_top + P + lift - well_h - DECK_T)/IN), ""]
+for c, it, q, sp in bom:
+    lines.append("%-12s %-62s x%-8s %s" % (c, it, q, sp))
+lines += ["", "-- Estimated weight (approximate) --"]
+lines += ["%-22s %6.1f lb" % (k, v*2.2046) for k, v in kg.items()]
+lines.append("%-22s %6.1f lb  (budget %d lb)" % ("TOTAL", total_kg*2.2046, CAMPER_WEIGHT_BUDGET_LB))
+if warnings:
+    lines += ["", "WARNINGS:"] + ["  ! " + w for w in warnings]
+lines += ["", "NOT MODELED / TO DESIGN: deck support ribs and legs (3/4in ply sags over a 44in span - plan 2x2 ribs ~16in",
+          "apart), vertical lid guides/anti-rack, wiring/fusing, wind and travel loads, fire/ventilation. Test before use."]
+App.Console.PrintMessage("\n".join(lines) + "\n")
+
+try:
+    path = os.path.join(os.path.expanduser("~"), "Downloads", "camper_bom.csv")
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["Category", "Item", "Qty", "Spec"])
+        w.writerows(bom)
+        w.writerow([])
+        w.writerow(["Estimated total weight (lb)", round(total_kg*2.2046, 1)])
+    App.Console.PrintMessage("BOM written to %s\n" % path)
+except Exception as e:
+    App.Console.PrintWarning("Could not write BOM CSV: %s\n" % e)
+
+doc.recompute()
+FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+FreeCADGui.ActiveDocument.ActiveView.fitAll()
