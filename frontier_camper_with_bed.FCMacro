@@ -1,0 +1,128 @@
+# 2005 Nissan Frontier 6 ft bed + low-profile pop-up roof camper (FreeCAD, Part workbench)
+# Run: File > Open this file (set filter to All files), then press Execute (Ctrl+F6).
+# Units mm. x = 0 at tailgate, + toward cab. y = across bed. z = 0 at bed floor top.
+# ALL TRUCK VALUES ARE APPROXIMATE - MEASURE YOURS AND EDIT.
+import FreeCAD as App
+import FreeCADGui
+import Part
+
+IN = 25.4
+
+# ---------------- Truck bed (approx.) ----------------
+bed_len      = 72.5 * IN
+bed_w_top    = 58.6 * IN    # inside width at rail tops
+wheel_well_w = 44.4 * IN    # clear width between wells
+well_h       = 7 * IN
+well_len     = 22 * IN
+well_x       = 24 * IN      # tailgate to start of wells
+well_r       = 4 * IN       # rounding of well top
+rail_h       = 18 * IN    # rail top above bed floor
+rail_cap     = 3.5 * IN       # rail top width
+floor_t      = 1 * IN
+tailgate_t   = 3.5 * IN
+headboard_t  = 1 * IN
+headboard_extra = 0 * IN    # headboard rises above rails
+
+# ---------------- Cab (ghost, for clearance) ----------------
+cab_gap          = 0.5 * IN   # headboard to cab rear
+cab_depth        = 30 * IN  # just a ghost block
+cab_width        = 66.5 * IN
+cab_roof_above_rail = 22 * IN   # MEASURE: rail top to cab roof (about 18-22 in)
+
+# ---------------- Camper ----------------
+shell_cab_gap = 1 * IN      # camper stops this far short of headboard
+stow_h   = 18 * IN          # stowed height above rails; must be < cab_roof_above_rail
+wall_t   = 1.5 * IN
+roof_t   = 1.5 * IN
+lift     = 20 * IN
+platform_t = 1.5 * IN
+POPPED   = True             # False = show stowed
+
+#doc = App.newDocument("FrontierBedCamper")
+doc = App.ActiveDocument
+
+def feature(name, shape, ghost=None, color=None):
+    f = doc.addObject("Part::Feature", name)
+    f.Shape = shape
+    if ghost is not None:
+        f.ViewObject.Transparency = ghost
+    if color is not None:
+        f.ViewObject.ShapeColor = color
+    return f
+
+V = App.Vector
+def mk(l, w, h, x, y, z):
+    return Part.makeBox(l, w, h, V(x, y, z))
+
+# ===================== TRUCK BED =====================
+Wout = bed_w_top + 2 * rail_cap
+feature("BedFloor", mk(bed_len, bed_w_top, floor_t, 0, 0, -floor_t), color=(0.35, 0.35, 0.4))
+feature("RailLeft",  mk(bed_len, rail_cap, rail_h + floor_t, 0, -rail_cap, -floor_t), color=(0.5, 0.5, 0.55))
+feature("RailRight", mk(bed_len, rail_cap, rail_h + floor_t, 0, bed_w_top, -floor_t), color=(0.5, 0.5, 0.55))
+feature("Headboard", mk(headboard_t, Wout, rail_h + headboard_extra + floor_t,
+                        bed_len, -rail_cap, -floor_t), color=(0.5, 0.5, 0.55))
+feature("Tailgate", mk(tailgate_t, bed_w_top, rail_h - 1 * IN, -tailgate_t, 0, 0), ghost=40,
+        color=(0.5, 0.5, 0.55))
+
+# Wheel wells with rounded tops
+side = (bed_w_top - wheel_well_w) / 2
+def well(name, y):
+    base = mk(well_len, side, well_h - well_r, well_x, y, 0)
+    top  = mk(well_len - 2 * well_r, side, well_r, well_x + well_r, y, well_h - well_r)
+    c1 = Part.makeCylinder(well_r, side, V(well_x + well_r, y, well_h - well_r), V(0, 1, 0))
+    c2 = Part.makeCylinder(well_r, side, V(well_x + well_len - well_r, y, well_h - well_r), V(0, 1, 0))
+    return feature(name, base.fuse([top, c1, c2]), color=(0.3, 0.3, 0.35))
+well("WellLeft", 0)
+well("WellRight", bed_w_top - side)
+
+# ===================== CAB GHOST =====================
+cab_y = (bed_w_top - cab_width) / 2
+cab_top = rail_h + cab_roof_above_rail
+feature("CabGhost", mk(cab_depth, cab_width, cab_top, bed_len + headboard_t + cab_gap,
+                       cab_y, 0), ghost=75, color=(0.7, 0.2, 0.2))
+
+# ===================== CAMPER =====================
+L = bed_len - shell_cab_gap
+W = Wout
+wall_h = stow_h - roof_t
+
+outer = mk(L, W, wall_h, 0, -rail_cap, rail_h)
+inner = mk(L - 2 * wall_t, W - 2 * wall_t, wall_h, wall_t, -rail_cap + wall_t, rail_h)
+shell = outer.cut(inner)
+
+# Rear hatch and side windows
+hatch_w = 36 * IN
+hatch_h = wall_h - 3 * IN
+cut = mk(wall_t * 2, hatch_w, hatch_h, -wall_t * 0.5, (bed_w_top - hatch_w) / 2, rail_h + 1.5 * IN)
+win_w, win_h = 16 * IN, 8 * IN
+for xp in (L * 0.30, L * 0.62):
+    cut = cut.fuse(mk(win_w, wall_t * 2, win_h, xp, -rail_cap - wall_t * 0.5, rail_h + 5 * IN))
+    cut = cut.fuse(mk(win_w, wall_t * 2, win_h, xp, bed_w_top + rail_cap - wall_t * 1.5, rail_h + 5 * IN))
+shell = shell.cut(cut)
+feature("CamperWalls", shell, color=(0.85, 0.85, 0.8))
+
+# Pop-up roof lid + fabric skirt
+lid_z = rail_h + wall_h + (lift if POPPED else 0)
+feature("RoofLid", mk(L, W, roof_t, 0, -rail_cap, lid_z), color=(0.85, 0.85, 0.8))
+if POPPED:
+    sk = mk(L, W, lift, 0, -rail_cap, rail_h + wall_h).cut(
+         mk(L - 0.5 * IN, W - 0.5 * IN, lift, 0.25 * IN, -rail_cap + 0.25 * IN, rail_h + wall_h))
+    feature("FabricSkirt", sk, ghost=60, color=(0.6, 0.7, 0.6))
+
+# Sleeping platform on top of wheel wells
+feature("SleepPlatform", mk(L - 2 * wall_t, bed_w_top, platform_t, wall_t, 0, well_h),
+        ghost=50, color=(0.8, 0.6, 0.3))
+
+# ===================== REPORT =====================
+platform_top = well_h + platform_t
+head_stow = rail_h + stow_h - platform_top
+print("Stowed top above rails: %.1f in (cab roof %.1f in above rails)" %
+      (stow_h / IN, cab_roof_above_rail / IN))
+if stow_h >= cab_roof_above_rail:
+    print("WARNING: stowed camper is taller than the cab roof!")
+print("Headroom above platform, stowed: %.1f in" % (head_stow / IN))
+print("Headroom above platform, popped: %.1f in" % ((head_stow + lift) / IN))
+
+doc.recompute()
+FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+FreeCADGui.ActiveDocument.ActiveView.fitAll()

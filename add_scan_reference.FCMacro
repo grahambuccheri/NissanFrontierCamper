@@ -1,0 +1,20 @@
+# Adds the aligned Polycam bed scan to the open FreeCAD document as a ghosted reference.
+# Run AFTER frontier_camper_with_bed.FCMacro (document "FrontierBedCamper" must be active).
+# Edit SCAN_PATH. Scan is ~9% oversize horizontally; tune SX/SY after you tape-measure.
+import FreeCAD as App, FreeCADGui, Mesh
+
+SCAN_PATH = r"C:\Users\Crane\Downloads\bed_scan_aligned_mm.stl"   # <- change to where you saved it
+SX = 1.0    # length scale (try ~0.91 if scan is oversize: 1847mm / ~2030mm)
+SY = 1.0    # width scale  (try ~0.91 if scan is oversize)
+SZ = 1.0    # height scale
+
+doc = App.ActiveDocument or App.newDocument("FrontierBedCamper")
+m = Mesh.Mesh(SCAN_PATH)
+mat = App.Matrix(); mat.scale(SX, SY, SZ)
+m.transform(mat)
+obj = doc.addObject("Mesh::Feature", "BedScan")
+obj.Mesh = m
+obj.ViewObject.ShapeColor = (0.2, 0.5, 0.9)
+obj.ViewObject.Transparency = 70
+doc.recompute()
+FreeCADGui.ActiveDocument.ActiveView.fitAll()
